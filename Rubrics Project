@@ -1,0 +1,157 @@
+-- CTE_AnalyticRubrics:
+-- This CTE pulls data related to analytic rubrics, which are detailed rubrics that assess students based on specific criteria.
+-- The data includes information such as course sections, rubric types, criteria values, and the names of instructors and students.
+-- The query filters for records where the SubCoSec field begins with 'GFA%' and the rubric type and name match 'Analytic%' and 'Internship%' respectively.
+-- Analyze the relationship between rubric data, course sections, and overall recommendations.
+
+-- Define the CTE for Analytic RubricType
+WITH CTE_AnalyticRubrics AS (
+    -- Select relevant columns related to analytic rubrics and course sections
+    SELECT
+        cs.OrgUnitId,  -- Select the OrgUnitId from the course section
+        cs.IngressTerm,  -- Select the term the course was taken
+        cs.SubCoSec,  -- Select the course section
+        cs.CourseDescription,  -- Select the course description
+        cs.CRN,  -- Select the course reference number (CRN)
+        cs.PartofTerm,  -- Select the part of term
+        cs.InstructorName,  -- Select the instructor name
+        ro.RubricType,  -- Select the type of rubric (Analytic)
+        ro.Name AS RubricName,  -- Select the rubric name
+        roc.Name AS CriterionName,  -- Select the criterion name within the rubric
+        rol.Value AS CriteriaObjectValue,  -- Select the value for the criterion object
+        rcl.Value AS CriteriaLevelValue,  -- Select the level value for the criterion
+        u.UserId,  -- Select the user ID of the student
+        u.FirstName,  -- Select the student's first name
+        u.LastName,  -- Select the student's last name
+        u.UserName  -- Select the student's username
+    FROM
+        [eCampus].dbo.[CourseSection] cs  -- From the course section table
+    LEFT JOIN
+        [d2l-datahub].[dbo].[RubricObjects] ro ON cs.OrgUnitId = ro.OrgUnitId  -- Join rubric objects with course sections on OrgUnitId
+    LEFT JOIN
+        [d2l-datahub].[dbo].[RubricObjectCriteria] roc ON ro.RubricId = roc.RubricId  -- Join rubric criteria with rubric objects on RubricId
+    LEFT JOIN
+        [d2l-datahub].[dbo].[RubricObjectLevels] rol ON roc.RubricId = rol.RubricId AND roc.LevelSetId = rol.LevelSetId  -- Join rubric levels with criteria on RubricId and LevelSetId
+    LEFT JOIN
+        [d2l-datahub].[dbo].[RubricCriteriaLevels] rcl ON roc.CriterionId = rcl.CriterionId AND rol.LevelId = rcl.LevelId  -- Join criteria levels on CriterionId and LevelId
+    LEFT JOIN
+        [d2l-datahub].[dbo].[RubricAssessmentCriteria] rac ON rcl.CriterionId = rac.CriterionId AND rol.LevelId = rac.LevelAchievedId  -- Join assessment criteria on CriterionId and LevelAchievedId
+    LEFT JOIN
+        [d2l-datahub].[dbo].[RubricAssessment] ra ON rac.AssessmentId = ra.AssessmentId  -- Join rubric assessments on AssessmentId
+    INNER JOIN
+        [d2l-datahub].[dbo].[Users] u ON ra.UserId = u.UserId  -- Join users on UserId
+    WHERE cs.SubCoSec LIKE 'GFA%'  -- Filter for course sections starting with 'GFA%'
+        AND ro.RubricType LIKE 'Analytic%'  -- Filter for analytic rubrics
+        AND ro.Name LIKE 'Internship%'  -- Filter for rubrics with names containing 'Internship'
+),
+
+-- CTE_HolisticRubrics:
+-- This CTE focuses on holistic rubrics, which assess students based on overall performance rather than specific criteria.
+-- The query retrieves data such as overall scores, activity types, and instructor names, filtering for rubrics named 'Internship Recommendation'.
+
+-- Define the CTE for Holistic RubricType
+CTE_HolisticRubrics AS (
+    -- Select relevant columns related to holistic rubrics and course sections
+    SELECT
+        cs.OrgUnitId,  -- Select the OrgUnitId from the course section
+        cs.IngressTerm,  -- Select the term the course was taken
+        cs.SubCoSec,  -- Select the course section
+        cs.CourseDescription,  -- Select the course description
+        cs.CRN,  -- Select the course reference number (CRN)
+        cs.PartofTerm,  -- Select the part of term
+        ts.TermDescription,  -- Select the term description
+        ts.SemesterStartDate,  -- Select the start date of the semester
+        ts.SemesterEndDate,  -- Select the end date of the semester
+        cs.InstructorName,  -- Select the instructor name
+        ro.Name AS RubricName,  -- Select the rubric name
+        ra.Score,  -- Select the score achieved
+        ra.ActivityType,  -- Select the type of activity assessed
+        ra.AssessmentId,  -- Select the assessment ID
+        ra.LevelAchievedId,  -- Select the achieved level ID
+        rol.Name AS OverallRating,  -- Select the overall rating
+        u.UserId,  -- Select the user ID of the student
+        u.FirstName,  -- Select the student's first name
+        u.LastName,  -- Select the student's last name
+        u.UserName  -- Select the student's username
+    FROM
+        [eCampus].[dbo].[CourseSection] cs  -- From the course section table
+    LEFT JOIN
+        [d2l-datahub].[dbo].[RubricObjects] ro ON cs.OrgUnitId = ro.OrgUnitId  -- Join rubric objects with course sections on OrgUnitId
+    LEFT JOIN
+        [d2l-datahub].[dbo].[RubricAssessment] ra ON ro.RubricId = ra.RubricId  -- Join rubric assessments on RubricId
+    LEFT JOIN
+        [d2l-datahub].[dbo].[RubricObjectLevels] rol ON ro.RubricId = rol.RubricId AND ra.LevelAchievedId = rol.LevelId  -- Join rubric levels on RubricId and LevelAchievedId
+    INNER JOIN
+        [d2l-datahub].[dbo].[Users] u ON ra.UserId = u.UserId  -- Join users on UserId
+    INNER JOIN
+        [eCampus].[dbo].[ref.Terms] ts ON  ts.IngressTerm =cs.IngressTerm  -- Join terms on IngressTerm
+    WHERE ro.Name Like 'Internship Recommendation'  -- Filter for rubrics named 'Internship Recommendation'
+),
+
+--CTE_OverallRecommendations:
+--This CTE retrieves overall feedback given to students, partitioned by the student’s submission ID and ordered by the Dropbox ID.
+--It combines data from assignment submissions and the corresponding rubric assessments.
+
+-- Define the CTE for OverallRecommendations
+CTE_OverallRecommendations AS (
+    -- Select relevant columns for overall recommendations
+    SELECT
+        sub.DropboxId,  -- Select the Dropbox ID
+        sub.OrgUnitId,  -- Select the OrgUnitId from the submission
+        sub.SubmitterId,  -- Select the submitter's user ID
+        sub.Feedback,  -- Select the feedback given
+        ROW_NUMBER() OVER (PARTITION BY sub.SubmitterId ORDER BY sub.DropboxId) AS rn  -- Generate a row number partitioned by submitter and ordered by Dropbox ID
+    FROM
+        [d2l-datahub].[dbo].[AssignmentSubmissions] sub  -- From the assignment submissions table
+    JOIN
+        [d2l-datahub].[dbo].[RubricAssessment] ra ON sub.DropboxId = ra.ActivityObjectId  -- Join rubric assessments on Dropbox ID and ActivityObjectId
+    JOIN
+        [d2l-datahub].[dbo].[RubricObjectLevels] rol ON ra.LevelAchievedId = rol.LevelId  -- Join rubric levels on LevelAchievedId and LevelId
+    JOIN
+        [d2l-datahub].[dbo].[RubricObjects] ro ON rol.RubricId = ro.RubricId  -- Join rubric objects on RubricId
+    LEFT JOIN
+        [d2l-datahub].[dbo].[Users] u ON sub.SubmitterId = u.UserId  -- Left join users on SubmitterId
+    WHERE ro.Name LIKE 'Internship Recommendation'  -- Filter for rubrics named 'Internship Recommendation'
+)
+
+-- Final Query:
+-- The final selection pulls together data from all three CTEs, organizing it by course section, rubric details, overall feedback, and student information.
+-- The results are ordered by organization unit ID, course reference number (CRN), and student username.
+
+-- Select the final result by combining the data from all CTEs
+SELECT
+    a.OrgUnitId,  -- Select the OrgUnitId from analytic rubrics
+    a.IngressTerm,  -- Select the term from analytic rubrics
+    a.SubCoSec,  -- Select the course section from analytic rubrics
+    a.CourseDescription,  -- Select the course description from analytic rubrics
+    a.CRN,  -- Select the CRN from analytic rubrics
+    a.PartofTerm,  -- Select the part of term from analytic rubrics
+    a.InstructorName,  -- Select the instructor name from analytic rubrics
+    a.RubricName AS AnalyticRubricName,  -- Select the rubric name as AnalyticRubricName
+    a.CriterionName AS AnalyticCriterionName,  -- Select the criterion name as AnalyticCriterionName
+    a.CriteriaLevelValue AS AnalyticCriteriaLevelValue,  -- Select the criterion level value as AnalyticCriteriaLevelValue
+    h.RubricName AS HolisticRubricName,  -- Select the rubric name from holistic rubrics as HolisticRubricName
+    h.Score,  -- Select the score from holistic rubrics
+    h.TermDescription,  -- Select the term description from holistic rubrics
+    h.SemesterStartDate,  -- Select the semester start date from holistic rubrics
+    h.SemesterEndDate,  -- Select the semester end date from holistic rubrics
+    h.ActivityType,  -- Select the activity type from holistic rubrics
+    h.AssessmentId,  -- Select the assessment ID from holistic rubrics
+    h.LevelAchievedId,  -- Select the achieved level ID from holistic rubrics
+    h.OverallRating,  -- Select the overall rating from holistic rubrics
+    ovc.Feedback AS OverallFeedback,  -- Select the feedback as OverallFeedback from overall recommendations
+    a.FirstName,  -- Select the student's first name from analytic rubrics
+    a.LastName,  -- Select the student's last name from analytic rubrics
+    a.UserName  -- Select the student's username from analytic rubrics
+FROM
+    CTE_AnalyticRubrics a  -- From the analytic rubrics CTE
+FULL JOIN
+    CTE_HolisticRubrics h ON a.OrgUnitId = h.OrgUnitId  -- Full join holistic rubrics on OrgUnitId
+                         AND a.UserName = h.UserName  -- Join on UserName to align rubric data by student
+FULL JOIN
+    CTE_OverallRecommendations ovc ON a.OrgUnitId = ovc.OrgUnitId  -- Full join overall recommendations on OrgUnitId
+                                      AND a.UserId = ovc.SubmitterId  -- Join on UserId to align recommendation data by student
+ORDER BY
+    a.OrgUnitId ASC,  -- Order the results by OrgUnitId
+    a.CRN ASC,  -- Order by CRN within each OrgUnitId
+    a.UserName ASC;  -- Order by UserName within each CRN
